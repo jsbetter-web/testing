@@ -1,157 +1,196 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Kart Clone - Multiplayer</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kart Bros Clone - P2P</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background: #111; color: white; font-family: sans-serif; overflow: hidden; }
-        #ui { position: absolute; top: 10px; width: 100%; z-index: 10; text-align: center; pointer-events: none; }
-        #setup { pointer-events: auto; background: rgba(0,0,0,0.9); padding: 20px; display: inline-block; border: 2px solid #555; border-radius: 10px; }
-        input { padding: 10px; width: 200px; border-radius: 5px; border: 1px solid #444; background: #222; color: white; }
-        button { padding: 10px 20px; cursor: pointer; background: #27ae60; color: white; border: none; font-weight: bold; border-radius: 5px; }
-        #status { color: #f1c40f; font-weight: bold; margin-top: 10px; }
-        .hidden { display: none; }
+        body { margin: 0; background: #111; color: white; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
+        #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; justify-content: center; align-items: center; z-index: 10; }
+        #setup { pointer-events: auto; background: rgba(0, 0, 0, 0.85); padding: 30px; border-radius: 15px; border: 2px solid #3498db; text-align: center; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        h1 { margin-top: 0; color: #3498db; letter-spacing: 2px; }
+        input { padding: 12px; width: 220px; border-radius: 5px; border: 1px solid #444; background: #222; color: white; font-size: 16px; margin-bottom: 10px; }
+        button { padding: 12px 25px; cursor: pointer; background: #27ae60; color: white; border: none; font-weight: bold; border-radius: 5px; font-size: 16px; transition: 0.2s; }
+        button:hover { background: #2ecc71; transform: scale(1.05); }
+        #status { color: #f1c40f; margin-top: 15px; font-weight: bold; min-height: 20px; }
+        .controls-hint { font-size: 12px; color: #888; margin-top: 20px; }
     </style>
 </head>
 <body>
 
     <div id="ui">
         <div id="setup">
-            <h2 style="margin-top:0">KART RACER</h2>
-            <button onclick="hostGame()">CREATE ROOM</button>
-            <div style="margin: 10px 0;">-- OR --</div>
-            <input type="text" id="joinId" placeholder="Friend's Code">
-            <button onclick="joinGame()">JOIN</button>
-            <div id="status">Connecting to server...</div>
+            <h1>KART BROS P2P</h1>
+            <button onclick="hostGame()">CREATE ROOM (HOST)</button>
+            <div style="margin: 15px 0; color: #666;">— OR —</div>
+            <input type="text" id="joinId" placeholder="Enter Friend's Code">
+            <br>
+            <button style="background: #2980b9;" onclick="joinGame()">JOIN RACE</button>
+            <div id="status">Checking connection...</div>
+            <div class="controls-hint">ARROWS to Drive | Drift is automatic</div>
         </div>
     </div>
 
-    <script>
+<script>
     let peer, conn;
-    let player, otherPlayer, boosts;
+    let player, otherPlayer, boosts, track;
     let cursors;
     let speed = 0;
-    let maxSpeed = 400;
-    const driftFactor = 0.94;
+    const maxSpeed = 450;
+    const driftFactor = 0.95; // Higher = more slippery
 
     const config = {
         type: Phaser.AUTO,
         width: window.innerWidth,
         height: window.innerHeight,
-        physics: { default: 'arcade' },
+        physics: { default: 'arcade', arcade: { debug: false } },
         scene: { preload: preload, create: create, update: update }
     };
 
     const game = new Phaser.Game(config);
 
-    // Initial server check
-    const tempPeer = new Peer();
-    tempPeer.on('open', () => { 
-        document.getElementById('status').innerText = "Ready to Play!";
-        tempPeer.destroy();
-    });
-
     function preload() {
         let g = this.add.graphics();
-        // Blue Car
-        g.fillStyle(0x3498db); g.fillRect(0, 0, 20, 40);
-        g.fillStyle(0x000000); g.fillRect(2, 5, 16, 10);
-        g.generateTexture('car_me', 20, 40);
-        // Red Car
-        g.clear(); g.fillStyle(0xe74c3c); g.fillRect(0, 0, 20, 40);
-        g.generateTexture('car_them', 20, 40);
+        
+        // My Car (Blue)
+        g.fillStyle(0x3498db); g.fillRect(0, 0, 24, 45);
+        g.fillStyle(0x000000); g.fillRect(3, 8, 18, 12); // Windshield
+        g.fillStyle(0xffffff); g.fillRect(4, 35, 6, 4); g.fillRect(14, 35, 6, 4); // Headlights
+        g.generateTexture('car_me', 24, 45);
+
+        // Friend's Car (Red)
+        g.clear();
+        g.fillStyle(0xe74c3c); g.fillRect(0, 0, 24, 45);
+        g.fillStyle(0x000000); g.fillRect(3, 8, 18, 12);
+        g.fillStyle(0xffffff); g.fillRect(4, 35, 6, 4); g.fillRect(14, 35, 6, 4);
+        g.generateTexture('car_them', 24, 45);
+
         // Boost Pad
-        g.clear(); g.fillStyle(0xf1c40f); g.fillRect(0, 0, 40, 40);
+        g.clear();
+        g.fillStyle(0xf1c40f); g.fillTriangle(0, 40, 20, 0, 40, 40);
         g.generateTexture('boost', 40, 40);
     }
 
     function create() {
-        this.cameras.main.setBounds(0, 0, 4000, 4000);
-        this.physics.world.setBounds(0, 0, 4000, 4000);
+        // World setup
+        const worldSize = 4000;
+        this.cameras.main.setBounds(0, 0, worldSize, worldSize);
+        this.physics.world.setBounds(0, 0, worldSize, worldSize);
 
-        // Simple Track (Grass and Road)
-        this.add.rectangle(2000, 2000, 4000, 4000, 0x27ae60);
-        let road = this.add.graphics();
-        road.lineStyle(120, 0x333333);
-        road.strokeRoundedRect(400, 400, 3200, 3200, 600);
+        // Draw the Track
+        this.add.rectangle(worldSize/2, worldSize/2, worldSize, worldSize, 0x27ae60); // Grass
+        track = this.add.graphics();
+        track.lineStyle(150, 0x333333); // Road width
+        track.strokeRoundedRect(500, 500, 3000, 3000, 800); // Oval track
 
-        // Boost Pads Group
+        // Boost Pads
         boosts = this.physics.add.staticGroup();
-        boosts.create(800, 400, 'boost');
-        boosts.create(3200, 800, 'boost');
-        boosts.create(2000, 3600, 'boost');
+        boosts.create(800, 500, 'boost');
+        boosts.create(3200, 1000, 'boost');
+        boosts.create(2000, 3500, 'boost');
+        boosts.create(500, 2000, 'boost');
 
-        // Players
-        player = this.physics.add.sprite(600, 400, 'car_me');
+        // Local Player
+        player = this.physics.add.sprite(650, 500, 'car_me');
         player.setCollideWorldBounds(true);
         this.cameras.main.startFollow(player, true, 0.1, 0.1);
 
-        otherPlayer = this.add.sprite(-100, -100, 'car_them');
+        // Remote Player
+        otherPlayer = this.add.sprite(-500, -500, 'car_them');
+        otherPlayer.setVisible(false);
 
-        // Overlap logic for boosts
-        this.physics.add.overlap(player, boosts, collectBoost, null, this);
+        // Physics Logic
+        this.physics.add.overlap(player, boosts, (p, b) => {
+            speed = 900; // Boost speed
+        }, null, this);
 
         cursors = this.input.keyboard.createCursorKeys();
-    }
-
-    function collectBoost(player, boost) {
-        speed = 800; // Instant burst
-        document.getElementById('status').innerText = "BOOST!";
-        setTimeout(() => { document.getElementById('status').innerText = ""; }, 1000);
+        document.getElementById('status').innerText = "Online & Ready";
     }
 
     function update() {
-        if (cursors.left.isDown) player.setAngularVelocity(-220);
-        else if (cursors.right.isDown) player.setAngularVelocity(220);
-        else player.setAngularVelocity(0);
+        // 1. Inputs
+        if (cursors.left.isDown) {
+            player.setAngularVelocity(-240);
+        } else if (cursors.right.isDown) {
+            player.setAngularVelocity(240);
+        } else {
+            player.setAngularVelocity(0);
+        }
 
-        if (cursors.up.isDown) speed = Math.min(speed + 12, maxSpeed);
-        else speed *= 0.97;
+        if (cursors.up.isDown) {
+            speed = Math.min(speed + 15, maxSpeed);
+        } else {
+            speed *= 0.97; // Drag
+        }
 
-        const velocityX = Math.sin(player.rotation) * speed;
-        const velocityY = -Math.cos(player.rotation) * speed;
+        // 2. Drift Physics Math
+        const targetVx = Math.sin(player.rotation) * speed;
+        const targetVy = -Math.cos(player.rotation) * speed;
         
-        player.body.velocity.x = player.body.velocity.x * driftFactor + velocityX * (1 - driftFactor);
-        player.body.velocity.y = player.body.velocity.y * driftFactor + velocityY * (1 - driftFactor);
+        // Blend current velocity with desired direction
+        player.body.velocity.x = player.body.velocity.x * driftFactor + targetVx * (1 - driftFactor);
+        player.body.velocity.y = player.body.velocity.y * driftFactor + targetVy * (1 - driftFactor);
 
+        // 3. Network Sync
         if (conn && conn.open) {
-            conn.send({ x: player.x, y: player.y, angle: player.angle });
+            conn.send({
+                x: player.x,
+                y: player.y,
+                angle: player.angle
+            });
         }
     }
 
-    // --- UPDATED NETWORKING ---
+    // --- CONNECTION LOGIC (Blackjack Style) ---
+
     function hostGame() {
         peer = new Peer();
-        peer.on('open', id => {
-            document.getElementById('status').innerHTML = "CODE: <span style='color:white'>" + id + "</span><br>Send this to your friend!";
+        document.getElementById('status').innerText = "Generating Room Code...";
+
+        peer.on('open', (id) => {
+            document.getElementById('status').innerHTML = "CODE: <span style='color:white; font-size:20px;'>" + id + "</span><br>Give this to your friend!";
         });
-        peer.on('connection', c => {
+
+        peer.on('connection', (c) => {
             conn = c;
-            setupConn();
+            startRace();
         });
     }
 
     function joinGame() {
-        const id = document.getElementById('joinId').value;
-        if (!id) return alert("Enter a code first!");
+        const friendId = document.getElementById('joinId').value.trim();
+        if(!friendId) return alert("Paste a code first!");
+        
         peer = new Peer();
+        document.getElementById('status').innerText = "Connecting...";
+
         peer.on('open', () => {
-            conn = peer.connect(id);
-            setupConn();
+            conn = peer.connect(friendId);
+            startRace();
+        });
+
+        peer.on('error', (err) => {
+            alert("Join failed. Check the code.");
+            document.getElementById('status').innerText = "Error: " + err.type;
         });
     }
 
-    function setupConn() {
+    function startRace() {
+        // Wait for connection to open
         conn.on('open', () => {
-            document.getElementById('setup').classList.add('hidden');
-            conn.on('data', data => {
+            document.getElementById('ui').style.display = 'none';
+            otherPlayer.setVisible(true);
+
+            conn.on('data', (data) => {
                 otherPlayer.x = data.x;
                 otherPlayer.y = data.y;
                 otherPlayer.angle = data.angle;
             });
         });
     }
-    </script>
+</script>
 </body>
 </html>
