@@ -1,106 +1,151 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>P2P Blackjack</title>
+    <title>Multiplayer Drift Racer</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: sans-serif; background: #2c3e50; color: white; text-align: center; }
-        .setup-box { background: #34495e; padding: 20px; border-radius: 10px; display: inline-block; margin-top: 50px; }
-        .game-area { display: none; margin-top: 20px; }
-        .card { background: white; color: black; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px; font-weight: bold; width: 40px; }
-        button { padding: 10px 20px; cursor: pointer; background: #27ae60; border: none; color: white; border-radius: 5px; margin: 5px; }
-        #log { margin-top: 20px; color: #bdc3c7; }
+        body { margin: 0; background: #111; color: white; font-family: 'Courier New', Courier, monospace; overflow: hidden; }
+        #ui { position: absolute; top: 10px; width: 100%; z-index: 10; pointer-events: none; }
+        #setup { pointer-events: auto; background: rgba(0,0,0,0.8); padding: 20px; display: inline-block; border: 2px solid #555; }
+        input { padding: 8px; }
+        button { padding: 8px 15px; cursor: pointer; background: #e74c3c; color: white; border: none; font-weight: bold; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
 
-    <h1>Simple P2P Blackjack</h1>
-
-    <div id="setup" class="setup-box">
-        <h3>Step 1: Create or Join</h3>
-        <button onclick="startHost()">Create Room (I am Dealer)</button>
-        <br><br>
-        <input type="text" id="joinId" placeholder="Enter Room Code">
-        <button onclick="startJoin()">Join Friend</button>
-        <p id="myIdDisplay"></p>
-    </div>
-
-    <div id="game" class="game-area">
-        <h2 id="status">Waiting for player...</h2>
-        <div>
-            <h3>Your Hand:</h3>
-            <div id="myCards"></div>
-            <p>Score: <span id="myScore">0</span></p>
+    <div id="ui">
+        <div id="setup">
+            <h2>KART CLONE</h2>
+            <button onclick="hostGame()">CREATE ROOM</button>
+            <div style="margin: 10px 0;">OR</div>
+            <input type="text" id="joinId" placeholder="Paste Code Here">
+            <button onclick="joinGame()">JOIN FRIEND</button>
+            <p id="status">Status: Offline</p>
         </div>
-        <button id="hitBtn" onclick="hit()">Hit</button>
-        <button id="stayBtn" onclick="stay()">Stay</button>
-        <div id="log"></div>
     </div>
 
-<script>
+    <script>
     let peer, conn;
-    let myHand = [];
-    let isDealer = false;
+    let player, otherPlayer;
+    let cursors;
+    let speed = 0;
+    const maxSpeed = 400;
+    const driftFactor = 0.94; // This creates the "sliding" feel
 
-    // 1. Initialize Connection
-    function startHost() {
+    const config = {
+        type: Phaser.AUTO,
+        width: window.innerWidth,
+        height: window.innerHeight,
+        physics: { default: 'arcade' },
+        scene: { preload: preload, create: create, update: update }
+    };
+
+    const game = new Phaser.Game(config);
+
+    function preload() {
+        // Draw a simple car
+        let g = this.add.graphics();
+        g.fillStyle(0x3498db); // Blue Car
+        g.fillRect(0, 0, 20, 40);
+        g.fillStyle(0x000000); // Windshield
+        g.fillRect(2, 5, 16, 10);
+        g.generateTexture('car_me', 20, 40);
+
+        g.clear();
+        g.fillStyle(0xe74c3c); // Red Car
+        g.fillRect(0, 0, 20, 40);
+        g.generateTexture('car_them', 20, 40);
+    }
+
+    function create() {
+        // Create a large world
+        this.cameras.main.setBounds(0, 0, 3000, 3000);
+        this.physics.world.setBounds(0, 0, 3000, 3000);
+
+        // Draw a simple "Track" background
+        let bg = this.add.graphics();
+        bg.lineStyle(80, 0x333333);
+        bg.strokeRoundedRect(200, 200, 2600, 2600, 500); // The "Road"
+
+        // Local Player
+        player = this.physics.add.sprite(400, 300, 'car_me');
+        player.setCollideWorldBounds(true);
+        this.cameras.main.startFollow(player, true, 0.1, 0.1);
+
+        // Remote Player
+        otherPlayer = this.add.sprite(-100, -100, 'car_them');
+
+        cursors = this.input.keyboard.createCursorKeys();
+    }
+
+    function update() {
+        // 1. TURNING
+        if (cursors.left.isDown) {
+            player.setAngularVelocity(-200);
+        } else if (cursors.right.isDown) {
+            player.setAngularVelocity(200);
+        } else {
+            player.setAngularVelocity(0);
+        }
+
+        // 2. ACCELERATION
+        if (cursors.up.isDown) {
+            speed = Math.min(speed + 10, maxSpeed);
+        } else {
+            speed *= 0.98; // Natural slowdown
+        }
+
+        // 3. DRIFT PHYSICS
+        // This is the math that makes it feel like Kart Bros
+        const velocityX = Math.sin(player.rotation) * speed;
+        const velocityY = -Math.cos(player.rotation) * speed;
+        
+        // We blend the current velocity with the new direction for a "slide"
+        player.body.velocity.x = player.body.velocity.x * driftFactor + velocityX * (1 - driftFactor);
+        player.body.velocity.y = player.body.velocity.y * driftFactor + velocityY * (1 - driftFactor);
+
+        // 4. NETWORKING
+        if (conn && conn.open) {
+            conn.send({
+                x: player.x,
+                y: player.y,
+                angle: player.angle
+            });
+        }
+    }
+
+    // --- NETWORKING LOGIC ---
+    function hostGame() {
         peer = new Peer();
         peer.on('open', id => {
-            document.getElementById('myIdDisplay').innerText = "Your Room Code: " + id;
-            isDealer = true;
+            document.getElementById('status').innerText = "SHARE THIS CODE: " + id;
+            console.log("My ID:", id);
         });
         peer.on('connection', c => {
             conn = c;
-            setupGame();
+            setupConn();
         });
     }
 
-    function startJoin() {
-        const friendId = document.getElementById('joinId').value;
+    function joinGame() {
+        const id = document.getElementById('joinId').value;
         peer = new Peer();
         peer.on('open', () => {
-            conn = peer.connect(friendId);
-            setupGame();
+            conn = peer.connect(id);
+            setupConn();
         });
     }
 
-    function setupGame() {
-        document.getElementById('setup').style.display = 'none';
-        document.getElementById('game').style.display = 'block';
-        
+    function setupConn() {
+        document.getElementById('setup').classList.add('hidden');
         conn.on('data', data => {
-            if(data.type === 'card') addCard(data.val);
-            if(data.type === 'msg') document.getElementById('log').innerText = data.val;
+            otherPlayer.x = data.x;
+            otherPlayer.y = data.y;
+            otherPlayer.angle = data.angle;
         });
     }
-
-    // 2. Game Logic
-    function hit() {
-        const card = Math.floor(Math.random() * 10) + 1; // Simplified 1-10 cards
-        addCard(card);
-        conn.send({type: 'msg', val: "Friend just hit!"});
-    }
-
-    function stay() {
-        document.getElementById('hitBtn').disabled = true;
-        conn.send({type: 'msg', val: "Friend is staying."});
-    }
-
-    function addCard(val) {
-        myHand.push(val);
-        const cardDiv = document.createElement('div');
-        cardDiv.className = 'card';
-        cardDiv.innerText = val;
-        document.getElementById('myCards').appendChild(cardDiv);
-        
-        let score = myHand.reduce((a, b) => a + b, 0);
-        document.getElementById('myScore').innerText = score;
-        if(score > 21) {
-            document.getElementById('status').innerText = "BUSTED!";
-            document.getElementById('hitBtn').disabled = true;
-        }
-    }
-</script>
+    </script>
 </body>
 </html>
