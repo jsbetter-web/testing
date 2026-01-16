@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>P2P Blackjack</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: sans-serif; background: #2c3e50; color: white; text-align: center; }
+        .setup-box { background: #34495e; padding: 20px; border-radius: 10px; display: inline-block; margin-top: 50px; }
+        .game-area { display: none; margin-top: 20px; }
+        .card { background: white; color: black; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px; font-weight: bold; width: 40px; }
+        button { padding: 10px 20px; cursor: pointer; background: #27ae60; border: none; color: white; border-radius: 5px; margin: 5px; }
+        #log { margin-top: 20px; color: #bdc3c7; }
+    </style>
+</head>
+<body>
+
+    <h1>Simple P2P Blackjack</h1>
+
+    <div id="setup" class="setup-box">
+        <h3>Step 1: Create or Join</h3>
+        <button onclick="startHost()">Create Room (I am Dealer)</button>
+        <br><br>
+        <input type="text" id="joinId" placeholder="Enter Room Code">
+        <button onclick="startJoin()">Join Friend</button>
+        <p id="myIdDisplay"></p>
+    </div>
+
+    <div id="game" class="game-area">
+        <h2 id="status">Waiting for player...</h2>
+        <div>
+            <h3>Your Hand:</h3>
+            <div id="myCards"></div>
+            <p>Score: <span id="myScore">0</span></p>
+        </div>
+        <button id="hitBtn" onclick="hit()">Hit</button>
+        <button id="stayBtn" onclick="stay()">Stay</button>
+        <div id="log"></div>
+    </div>
+
+<script>
+    let peer, conn;
+    let myHand = [];
+    let isDealer = false;
+
+    // 1. Initialize Connection
+    function startHost() {
+        peer = new Peer();
+        peer.on('open', id => {
+            document.getElementById('myIdDisplay').innerText = "Your Room Code: " + id;
+            isDealer = true;
+        });
+        peer.on('connection', c => {
+            conn = c;
+            setupGame();
+        });
+    }
+
+    function startJoin() {
+        const friendId = document.getElementById('joinId').value;
+        peer = new Peer();
+        peer.on('open', () => {
+            conn = peer.connect(friendId);
+            setupGame();
+        });
+    }
+
+    function setupGame() {
+        document.getElementById('setup').style.display = 'none';
+        document.getElementById('game').style.display = 'block';
+        
+        conn.on('data', data => {
+            if(data.type === 'card') addCard(data.val);
+            if(data.type === 'msg') document.getElementById('log').innerText = data.val;
+        });
+    }
+
+    // 2. Game Logic
+    function hit() {
+        const card = Math.floor(Math.random() * 10) + 1; // Simplified 1-10 cards
+        addCard(card);
+        conn.send({type: 'msg', val: "Friend just hit!"});
+    }
+
+    function stay() {
+        document.getElementById('hitBtn').disabled = true;
+        conn.send({type: 'msg', val: "Friend is staying."});
+    }
+
+    function addCard(val) {
+        myHand.push(val);
+        const cardDiv = document.createElement('div');
+        cardDiv.className = 'card';
+        cardDiv.innerText = val;
+        document.getElementById('myCards').appendChild(cardDiv);
+        
+        let score = myHand.reduce((a, b) => a + b, 0);
+        document.getElementById('myScore').innerText = score;
+        if(score > 21) {
+            document.getElementById('status').innerText = "BUSTED!";
+            document.getElementById('hitBtn').disabled = true;
+        }
+    }
+</script>
+</body>
+</html>
